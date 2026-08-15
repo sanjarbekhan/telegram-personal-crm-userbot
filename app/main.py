@@ -30,7 +30,13 @@ async def main() -> None:
     user_client = build_user_client(cfg)
     register_userbot_handlers(user_client, db, admin_bot, cfg)
 
-    await user_client.start(phone=cfg.phone_number)
+    await user_client.connect()
+    if not await user_client.is_user_authorized():
+        await user_client.disconnect()
+        raise RuntimeError(
+            "TELETHON_SESSION yaroqsiz yoki boshqa akkauntga tegishli. "
+            "Uni lokal kompyuterda qayta yarating."
+        )
     logger.info("Userbot connected")
 
     async def scan_func(days: int) -> int:
