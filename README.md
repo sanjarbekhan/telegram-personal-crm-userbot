@@ -1,30 +1,30 @@
 # Telegram Personal CRM Userbot
 
-Bu loyiha shaxsiy Telegram akkauntingiz orqali oldin yozishgan private chat mijozlarga sana bo‘yicha follow-up yuborish uchun tayyorlangan.
+Shaxsiy Telegram akkaunti orqali CRM mijozlariga follow-up va oldindan rejalashtirilgan matnli xabar yuboradigan admin bot.
 
-## Nima qiladi?
+## Imkoniyatlar
 
-- Shaxsiy Telegram akkauntingizga Telethon orqali ulanadi.
-- Private chatlardagi mijozlarni Supabase bazaga saqlaydi.
-- Har bir xabarni sana bo‘yicha saqlaydi.
-- Admin Telegram bot orqali sana tanlaysiz.
-- O‘sha kuni yozishgan mijozlar topiladi.
-- Siz bitta xabar yozasiz va tasdiqlaysiz.
-- Xabarlar sizning shaxsiy Telegram akkauntingizdan navbat bilan yuboriladi.
-- `do_not_contact` statusidagi mijozlarga xabar yuborilmaydi.
-- Delay va kunlik limit bor.
+- Telethon orqali shaxsiy Telegram akkauntiga ulanadi.
+- Private chatlar va mijozlarni Supabase PostgreSQL bazasiga saqlaydi.
+- Tanlangan kundagi mijozlarga navbat bilan follow-up yuboradi.
+- Bir yoki bir nechta `@username` uchun aniq sana-vaqtga xabar rejalaydi.
+- Rejadagi xabarni oldindan ko‘rsatadi, tasdiqlatadi, statuslarni ko‘rsatadi va yuborilishidan oldin bekor qiladi.
+- Har bir username bo‘yicha `sent`, `failed` yoki `skipped` natijasini saqlaydi.
+- FloodWait, xavfsiz yuborish oralig‘i va umumiy kunlik limitni hisobga oladi.
+- Admin tugmalariga darhol javob beradi; eskirgan callback xatosi worker’ni to‘xtatmaydi.
+- Faqat `ADMIN_TELEGRAM_ID` egasi admin paneldan foydalana oladi.
 
 ## Texnologiyalar
 
-- Python
+- Python 3.11+
 - Telethon
 - aiogram 3
 - Supabase PostgreSQL
-- Render Background Worker
+- Railway yoki Render Background Worker
 
-## 1. Supabase sozlash
+## 1. Supabase
 
-Supabase loyihangizni oching va SQL Editor ichida `sql/schema.sql` faylini ishga tushiring.
+Yangi Supabase loyihasining SQL Editor bo‘limida `sql/schema.sql` faylini bir marta ishga tushiring.
 
 Yaratiladigan jadvallar:
 
@@ -32,159 +32,77 @@ Yaratiladigan jadvallar:
 - `telegram_chat_messages`
 - `telegram_broadcasts`
 - `telegram_broadcast_logs`
+- `telegram_scheduled_messages`
+- `telegram_scheduled_recipients`
 - `crm_settings`
 
-## 2. Telegram API_ID va API_HASH olish
+Schema barcha jadvallarda RLS’ni yoqadi, `anon` va `authenticated` rollaridan huquqlarni olib tashlaydi. Bot serverda faqat `service_role` kalitidan foydalanadi.
 
-1. `https://my.telegram.org/apps` ga kiring.
-2. Telegram raqamingiz bilan login qiling.
-3. App yarating.
-4. `api_id` va `api_hash` ni oling.
+## 2. Telegram sozlamalari
 
-## 3. Admin bot token olish
+1. `https://my.telegram.org/apps` orqali shaxsiy akkaunt uchun `API_ID` va `API_HASH` oling.
+2. `@BotFather` orqali alohida admin bot yarating va tokenini oling.
+3. O‘zingizning Telegram ID’ingizni `ADMIN_TELEGRAM_ID` sifatida yozing.
+4. Lokal kompyuterda `python -m app.make_session` bilan yangi akkauntning `TELETHON_SESSION` qiymatini yarating.
 
-1. Telegram’da `@BotFather` ni oching.
-2. `/newbot` qiling.
-3. Bot tokenni oling.
-4. O‘zingizning Telegram ID’ingizni `ADMIN_TELEGRAM_ID` sifatida yozing.
+`TELETHON_SESSION`, bot tokeni, Supabase `service_role` kaliti, `.env` va `*.session` fayllarini GitHub’ga yuklamang.
 
-Telegram ID bilish uchun `@userinfobot` kabi botdan foydalanishingiz mumkin.
-
-## 4. Lokal ishga tushirish
+## 3. Lokal ishga tushirish
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-```
-
-Windows’da:
-
-```bash
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-copy .env.example .env
-```
-
-`.env` ichini to‘ldiring.
-
-## 5. StringSession yaratish
-
-Render’da Telegram kod/SMS so‘ramasligi uchun sessiyani lokalda yarating:
-
-```bash
 python -m app.make_session
-```
-
-Telegram kodini kiriting. Chiqqan uzun `TELETHON_SESSION` qiymatini Render Environment Variables ichiga qo‘ying.
-
-Muhim: `TELETHON_SESSION`, `.env`, `*.session` fayllarni hech qachon GitHub’ga yuklamang.
-
-## 6. Lokal test
-
-```bash
 python -m app.main
 ```
 
-Admin botga kiring va `/start` bosing.
+Windows uchun virtual muhitni faollashtirish:
 
-## 7. Chatlarni skan qilish
-
-Admin bot ichida:
-
-```text
-/scan 30
+```powershell
+.venv\Scripts\activate
 ```
 
-Bu oxirgi 30 kunlik private chatlarni Supabase bazaga tushiradi.
-
-## 8. Broadcast yuborish
+## 4. Rejadagi xabar
 
 Admin botda:
 
-1. `📨 Broadcast yuborish` ni bosing.
-2. Sana kiriting: `2026-06-18`
-3. Bot o‘sha kuni yozishgan mijozlar sonini ko‘rsatadi.
+1. `⏰ Xabar rejalash` tugmasini bosing.
+2. Username’larni vergul yoki yangi qatorda kiriting: `@ali_01, @vali_02`.
+3. `Asia/Tashkent` bo‘yicha vaqtni kiriting: `2026-08-20 14:30` yoki `2026-08-20 14:30:15`.
 4. Xabar matnini yozing.
-5. Tasdiqlang.
-6. Sender worker xabarlarni shaxsiy akkauntingiz orqali yuboradi.
+5. Preview’ni tekshirib, tasdiqlang.
 
-## 9. Status o‘zgartirish
+Belgilangan vaqt kelganda worker xabarlarni shaxsiy akkaunt nomidan yuborishni boshlaydi. Bitta username bo‘lsa xabar darhol yuboriladi; bir nechta username bo‘lsa Telegram xavfsizligi uchun ular orasida sozlangan interval saqlanadi.
 
-Mijozga boshqa yozmaslik uchun:
+`🗓 Rejadagi xabarlar` tugmasi orqali oxirgi ishlarni ko‘rish va hali boshlanmagan xabarni bekor qilish mumkin.
+
+## 5. CRM broadcast
+
+- `/scan 30` — oxirgi 30 kunlik private chatlarni bazaga tushiradi.
+- `📅 Sana bo‘yicha mijozlar` — tanlangan kundagi mijozlarni ko‘rsatadi.
+- `📨 Broadcast yuborish` — shu mijozlarga follow-up navbatini yaratadi.
+- `/status 123456789 do_not_contact` — mijozga boshqa yozilmasligini belgilaydi.
+- `/report` — oxirgi broadcast natijalarini ko‘rsatadi.
+
+## 6. Deploy
+
+Background Worker uchun:
 
 ```text
-/status 123456789 do_not_contact
+Build: pip install -r requirements.txt
+Start: python -m app.main
 ```
 
-Follow-up status berish uchun:
+Kerakli Environment Variables `.env.example` ichida berilgan. Server doim ishlab turishi kerak; aks holda rejadagi xabar server qayta yoqilgandan keyingina yuboriladi.
 
-```text
-/status 123456789 follow_up
-```
+## Mas’uliyatli foydalanish
 
-Statuslar:
-
-- `new`
-- `contacted`
-- `interested`
-- `follow_up`
-- `paid`
-- `rejected`
-- `do_not_contact`
-
-## 10. Render deploy
-
-### GitHub
-
-1. Bu papkani GitHub repository’ga yuklang.
-2. `.env`, session fayllar va maxfiy tokenlar GitHub’ga chiqmasin.
-
-### Render
-
-Render’da yangi **Background Worker** yarating.
-
-Build Command:
-
-```bash
-pip install -r requirements.txt
-```
-
-Start Command:
-
-```bash
-python -m app.main
-```
-
-Environment Variables:
-
-```env
-API_ID=...
-API_HASH=...
-PHONE_NUMBER=+998...
-TELETHON_SESSION=...
-ADMIN_BOT_TOKEN=...
-ADMIN_TELEGRAM_ID=...
-SUPABASE_URL=...
-SUPABASE_SERVICE_ROLE_KEY=...
-DAILY_SEND_LIMIT=100
-MIN_DELAY_SECONDS=20
-MAX_DELAY_SECONDS=40
-SCAN_DAYS=30
-RUN_INITIAL_SCAN=false
-POLL_SECONDS=8
-```
-
-## Muhim xavfsizlik
-
-- Faqat oldin yozishgan mijozlarga yuboring.
-- Juda ko‘p odamga birdaniga yubormang.
-- Delayni kamaytirmang.
-- `do_not_contact` statusidan foydalaning.
-- `TELETHON_SESSION` ni hech kimga bermang.
-- Supabase `SERVICE_ROLE_KEY` ni faqat server/Render’da saqlang.
+- Faqat sizdan xabar kutayotgan yoki aloqa qilishga rozilik bergan odamlarga yozing.
+- Telegram cheklovlarini aylanib o‘tishga urinmang va yuborish oralig‘ini keskin kamaytirmang.
+- Keraksiz kontaktlarni `do_not_contact` bilan bloklang.
+- `DAILY_SEND_LIMIT` va FloodWait himoyasini yoqilgan holda qoldiring.
 
 ## Fayl tuzilmasi
 
@@ -195,13 +113,12 @@ app/
   db.py
   main.py
   make_session.py
+  scheduling.py
   sender_worker.py
   userbot.py
 sql/
   schema.sql
 .env.example
-.gitignore
-render.yaml
 requirements.txt
 README.md
 ```

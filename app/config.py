@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+
 from dotenv import load_dotenv
 
 
@@ -24,6 +25,8 @@ class Config:
     scan_days: int = 30
     run_initial_scan: bool = False
     poll_seconds: int = 8
+    schedule_poll_seconds: int = 5
+    timezone: str = "Asia/Tashkent"
 
     @staticmethod
     def load() -> "Config":
@@ -50,4 +53,6 @@ class Config:
             scan_days=int(os.getenv("SCAN_DAYS", "30")),
             run_initial_scan=os.getenv("RUN_INITIAL_SCAN", "false").lower() == "true",
             poll_seconds=int(os.getenv("POLL_SECONDS", "8")),
+            schedule_poll_seconds=int(os.getenv("SCHEDULE_POLL_SECONDS", "5")),
+            timezone=os.getenv("TIMEZONE", "Asia/Tashkent"),
         )

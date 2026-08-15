@@ -51,6 +51,33 @@ create table if not exists telegram_broadcast_logs (
   unique (broadcast_id, telegram_user_id)
 );
 
+create table if not exists telegram_scheduled_messages (
+  id uuid primary key default gen_random_uuid(),
+  scheduled_at timestamptz not null,
+  timezone text not null default 'Asia/Tashkent',
+  message_text text not null check (char_length(message_text) between 1 and 4096),
+  total_count int not null default 0 check (total_count between 1 and 50),
+  sent_count int not null default 0,
+  failed_count int not null default 0,
+  skipped_count int not null default 0,
+  status text not null default 'queued' check (status in ('queued', 'running', 'finished', 'cancelled')),
+  started_at timestamptz,
+  finished_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists telegram_scheduled_recipients (
+  id uuid primary key default gen_random_uuid(),
+  scheduled_message_id uuid not null references telegram_scheduled_messages(id) on delete cascade,
+  username text not null check (username ~ '^[a-z][a-z0-9_]{4,31}$'),
+  telegram_user_id bigint,
+  status text not null default 'pending' check (status in ('pending', 'processing', 'sent', 'failed', 'skipped')),
+  error_text text,
+  sent_at timestamptz,
+  created_at timestamptz not null default now(),
+  unique (scheduled_message_id, username)
+);
+
 create table if not exists crm_settings (
   key text primary key,
   value text,
@@ -59,12 +86,46 @@ create table if not exists crm_settings (
 
 insert into crm_settings (key, value)
 values
-('daily_send_limit', '100'),
-('min_delay_seconds', '20'),
-('max_delay_seconds', '40')
+  ('daily_send_limit', '100'),
+  ('min_delay_seconds', '20'),
+  ('max_delay_seconds', '40')
 on conflict (key) do nothing;
 
-create index if not exists idx_chat_messages_date on telegram_chat_messages(message_date);
-create index if not exists idx_chat_messages_user_date on telegram_chat_messages(telegram_user_id, message_date);
-create index if not exists idx_broadcast_logs_pending on telegram_broadcast_logs(status, created_at);
-create index if not exists idx_customers_status on telegram_customers(status);
+create index if not exists idx_chat_messages_date
+  on telegram_chat_messages(message_date);
+create index if not exists idx_chat_messages_user_date
+  on telegram_chat_messages(telegram_user_id, message_date);
+create index if not exists idx_broadcast_logs_pending
+  on telegram_broadcast_logs(status, created_at);
+create index if not exists idx_customers_status
+  on telegram_customers(status);
+create index if not exists idx_scheduled_messages_due
+  on telegram_scheduled_messages(status, scheduled_at);
+create index if not exists idx_scheduled_recipients_pending
+  on telegram_scheduled_recipients(scheduled_message_id, status, created_at);
+
+-- The bot uses only the server-side service_role key. Client roles get no table access.
+alter table telegram_customers enable row level security;
+alter table telegram_chat_messages enable row level security;
+alter table telegram_broadcasts enable row level security;
+alter table telegram_broadcast_logs enable row level security;
+alter table telegram_scheduled_messages enable row level security;
+alter table telegram_scheduled_recipients enable row level security;
+alter table crm_settings enable row level security;
+
+revoke all on table telegram_customers from anon, authenticated;
+revoke all on table telegram_chat_messages from anon, authenticated;
+revoke all on table telegram_broadcasts from anon, authenticated;
+revoke all on table telegram_broadcast_logs from anon, authenticated;
+revoke all on table telegram_scheduled_messages from anon, authenticated;
+revoke all on table telegram_scheduled_recipients from anon, authenticated;
+revoke all on table crm_settings from anon, authenticated;
+
+grant usage on schema public to service_role;
+grant select, insert, update, delete on table telegram_customers to service_role;
+grant select, insert, update, delete on table telegram_chat_messages to service_role;
+grant select, insert, update, delete on table telegram_broadcasts to service_role;
+grant select, insert, update, delete on table telegram_broadcast_logs to service_role;
+grant select, insert, update, delete on table telegram_scheduled_messages to service_role;
+grant select, insert, update, delete on table telegram_scheduled_recipients to service_role;
+grant select, insert, update, delete on table crm_settings to service_role;

@@ -11,7 +11,10 @@ from app.config import Config
 class Database:
     def __init__(self, cfg: Config):
         self.cfg = cfg
-        self.client: Client = create_client(cfg.supabase_url, cfg.supabase_service_role_key)
+        self.client: Client = create_client(
+            cfg.supabase_url,
+            cfg.supabase_service_role_key,
+        )
 
     def upsert_customer(
         self,
@@ -39,7 +42,6 @@ class Database:
         if res.data:
             return res.data[0]
 
-        # fallback: fetch existing record
         res = (
             self.client.table("telegram_customers")
             .select("*")
@@ -71,7 +73,8 @@ class Database:
             "created_at": (created_at or datetime.now(timezone.utc)).isoformat(),
         }
         self.client.table("telegram_chat_messages").upsert(
-            payload, on_conflict="telegram_user_id,message_id"
+            payload,
+            on_conflict="telegram_user_id,message_id",
         ).execute()
 
     def get_customers_by_date(self, target_date: str) -> list[dict[str, Any]]:
@@ -86,14 +89,13 @@ class Database:
         if not user_ids:
             return []
 
-        customers = (
+        return (
             self.client.table("telegram_customers")
             .select("*")
             .in_("telegram_user_id", user_ids)
             .neq("status", "do_not_contact")
             .execute()
         ).data or []
-        return customers
 
     def create_broadcast(
         self,
@@ -117,20 +119,21 @@ class Database:
         logs = [
             {
                 "broadcast_id": broadcast["id"],
-                "customer_id": c["id"],
-                "telegram_user_id": c["telegram_user_id"],
+                "customer_id": customer["id"],
+                "telegram_user_id": customer["telegram_user_id"],
                 "status": "pending",
             }
-            for c in customers
+            for customer in customers
         ]
         if logs:
             self.client.table("telegram_broadcast_logs").upsert(
-                logs, on_conflict="broadcast_id,telegram_user_id"
+                logs,
+                on_conflict="broadcast_id,telegram_user_id",
             ).execute()
         return broadcast
 
     def get_next_pending_log(self) -> dict[str, Any] | None:
-        logs = (
+        rows = (
             self.client.table("telegram_broadcast_logs")
             .select("*")
             .eq("status", "pending")
@@ -138,7 +141,7 @@ class Database:
             .limit(1)
             .execute()
         ).data or []
-        return logs[0] if logs else None
+        return rows[0] if rows else None
 
     def get_broadcast(self, broadcast_id: str) -> dict[str, Any] | None:
         rows = (
@@ -160,20 +163,31 @@ class Database:
         ).data or []
         return rows[0] if rows else None
 
-    def update_log(self, log_id: str, status: str, error_text: str | None = None) -> None:
+    def update_log(
+        self,
+        log_id: str,
+        status: str,
+        error_text: str | None = None,
+    ) -> None:
         payload: dict[str, Any] = {"status": status}
         if status == "sent":
             payload["sent_at"] = datetime.now(timezone.utc).isoformat()
         if error_text:
             payload["error_text"] = error_text[:1000]
-        self.client.table("telegram_broadcast_logs").update(payload).eq("id", log_id).execute()
+        self.client.table("telegram_broadcast_logs").update(payload).eq(
+            "id",
+            log_id,
+        ).execute()
 
     def mark_broadcast_running(self, broadcast_id: str) -> None:
         broadcast = self.get_broadcast(broadcast_id)
         payload: dict[str, Any] = {"status": "running"}
         if broadcast and not broadcast.get("started_at"):
             payload["started_at"] = datetime.now(timezone.utc).isoformat()
-        self.client.table("telegram_broadcasts").update(payload).eq("id", broadcast_id).execute()
+        self.client.table("telegram_broadcasts").update(payload).eq(
+            "id",
+            broadcast_id,
+        ).execute()
 
     def recalc_broadcast_counts(self, broadcast_id: str) -> dict[str, int]:
         logs = (
@@ -187,24 +201,210 @@ class Database:
             "failed_count": sum(1 for row in logs if row["status"] == "failed"),
             "skipped_count": sum(1 for row in logs if row["status"] == "skipped"),
         }
-        pending = sum(1 for row in logs if row["status"] in ("pending", "processing"))
+        pending = sum(
+            1 for row in logs if row["status"] in ("pending", "processing")
+        )
         payload: dict[str, Any] = counts.copy()
         if pending == 0:
             payload["status"] = "finished"
             payload["finished_at"] = datetime.now(timezone.utc).isoformat()
-        self.client.table("telegram_broadcasts").update(payload).eq("id", broadcast_id).execute()
+        self.client.table("telegram_broadcasts").update(payload).eq(
+            "id",
+            broadcast_id,
+        ).execute()
         return counts
+
+    def create_scheduled_message(
+        self,
+        usernames: list[str],
+        message_text: str,
+        scheduled_at: datetime,
+        timezone_name: str,
+    ) -> dict[str, Any]:
+        job = (
+            self.client.table("telegram_scheduled_messages")
+            .insert(
+                {
+                    "scheduled_at": scheduled_at.astimezone(timezone.utc).isoformat(),
+                    "timezone": timezone_name,
+                    "message_text": message_text,
+                    "total_count": len(usernames),
+                    "status": "queued",
+                }
+            )
+            .execute()
+        ).data[0]
+
+        recipients = [
+            {
+                "scheduled_message_id": job["id"],
+                "username": username,
+                "status": "pending",
+            }
+            for username in usernames
+        ]
+        self.client.table("telegram_scheduled_recipients").upsert(
+            recipients,
+            on_conflict="scheduled_message_id,username",
+        ).execute()
+        return job
+
+    def get_due_scheduled_message(self) -> dict[str, Any] | None:
+        now = datetime.now(timezone.utc).isoformat()
+        rows = (
+            self.client.table("telegram_scheduled_messages")
+            .select("*")
+            .in_("status", ["queued", "running"])
+            .lte("scheduled_at", now)
+            .order("scheduled_at")
+            .limit(1)
+            .execute()
+        ).data or []
+        return rows[0] if rows else None
+
+    def get_next_scheduled_recipient(
+        self,
+        scheduled_message_id: str,
+    ) -> dict[str, Any] | None:
+        rows = (
+            self.client.table("telegram_scheduled_recipients")
+            .select("*")
+            .eq("scheduled_message_id", scheduled_message_id)
+            .eq("status", "pending")
+            .order("created_at")
+            .limit(1)
+            .execute()
+        ).data or []
+        return rows[0] if rows else None
+
+    def mark_scheduled_message_running(self, scheduled_message_id: str) -> None:
+        job = self.get_scheduled_message(scheduled_message_id)
+        payload: dict[str, Any] = {"status": "running"}
+        if job and not job.get("started_at"):
+            payload["started_at"] = datetime.now(timezone.utc).isoformat()
+        self.client.table("telegram_scheduled_messages").update(payload).eq(
+            "id",
+            scheduled_message_id,
+        ).execute()
+
+    def get_scheduled_message(
+        self,
+        scheduled_message_id: str,
+    ) -> dict[str, Any] | None:
+        rows = (
+            self.client.table("telegram_scheduled_messages")
+            .select("*")
+            .eq("id", scheduled_message_id)
+            .limit(1)
+            .execute()
+        ).data or []
+        return rows[0] if rows else None
+
+    def update_scheduled_recipient(
+        self,
+        recipient_id: str,
+        status: str,
+        telegram_user_id: int | None = None,
+        error_text: str | None = None,
+    ) -> None:
+        payload: dict[str, Any] = {"status": status}
+        if telegram_user_id is not None:
+            payload["telegram_user_id"] = telegram_user_id
+        if status == "sent":
+            payload["sent_at"] = datetime.now(timezone.utc).isoformat()
+        if error_text:
+            payload["error_text"] = error_text[:1000]
+        self.client.table("telegram_scheduled_recipients").update(payload).eq(
+            "id",
+            recipient_id,
+        ).execute()
+
+    def recalc_scheduled_counts(
+        self,
+        scheduled_message_id: str,
+    ) -> dict[str, int]:
+        recipients = (
+            self.client.table("telegram_scheduled_recipients")
+            .select("status")
+            .eq("scheduled_message_id", scheduled_message_id)
+            .execute()
+        ).data or []
+        counts = {
+            "sent_count": sum(1 for row in recipients if row["status"] == "sent"),
+            "failed_count": sum(
+                1 for row in recipients if row["status"] == "failed"
+            ),
+            "skipped_count": sum(
+                1 for row in recipients if row["status"] == "skipped"
+            ),
+        }
+        pending = sum(
+            1
+            for row in recipients
+            if row["status"] in ("pending", "processing")
+        )
+        payload: dict[str, Any] = counts.copy()
+        if pending == 0:
+            payload["status"] = "finished"
+            payload["finished_at"] = datetime.now(timezone.utc).isoformat()
+        self.client.table("telegram_scheduled_messages").update(payload).eq(
+            "id",
+            scheduled_message_id,
+        ).execute()
+        return counts
+
+    def recent_scheduled_messages(
+        self,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        return (
+            self.client.table("telegram_scheduled_messages")
+            .select("*")
+            .order("scheduled_at", desc=True)
+            .limit(limit)
+            .execute()
+        ).data or []
+
+    def cancel_scheduled_message(self, scheduled_message_id: str) -> bool:
+        rows = (
+            self.client.table("telegram_scheduled_messages")
+            .update(
+                {
+                    "status": "cancelled",
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+            .eq("id", scheduled_message_id)
+            .eq("status", "queued")
+            .execute()
+        ).data or []
+        if not rows:
+            return False
+        self.client.table("telegram_scheduled_recipients").update(
+            {"status": "skipped", "error_text": "Admin tomonidan bekor qilindi"}
+        ).eq("scheduled_message_id", scheduled_message_id).eq(
+            "status",
+            "pending",
+        ).execute()
+        return True
 
     def get_daily_sent_count(self) -> int:
         today = datetime.now(timezone.utc).date().isoformat()
-        logs = (
+        broadcast_rows = (
             self.client.table("telegram_broadcast_logs")
             .select("id")
             .eq("status", "sent")
             .gte("sent_at", f"{today}T00:00:00+00:00")
             .execute()
         ).data or []
-        return len(logs)
+        scheduled_rows = (
+            self.client.table("telegram_scheduled_recipients")
+            .select("id")
+            .eq("status", "sent")
+            .gte("sent_at", f"{today}T00:00:00+00:00")
+            .execute()
+        ).data or []
+        return len(broadcast_rows) + len(scheduled_rows)
 
     def get_setting_int(self, key: str, default: int) -> int:
         rows = (
@@ -222,29 +422,29 @@ class Database:
             return default
 
     def search_customers(self, text: str, limit: int = 10) -> list[dict[str, Any]]:
-        # Supabase ilike works well for username/full_name. Numeric search is handled separately.
-        q = text.strip().lstrip("@")
-        if q.isdigit():
-            rows = (
+        query = text.strip().lstrip("@")
+        if query.isdigit():
+            return (
                 self.client.table("telegram_customers")
                 .select("*")
-                .eq("telegram_user_id", int(q))
+                .eq("telegram_user_id", int(query))
                 .limit(limit)
                 .execute()
             ).data or []
-            return rows
-        rows = (
+        return (
             self.client.table("telegram_customers")
             .select("*")
-            .or_(f"full_name.ilike.%{q}%,username.ilike.%{q}%")
+            .or_(f"full_name.ilike.%{query}%,username.ilike.%{query}%")
             .limit(limit)
             .execute()
         ).data or []
-        return rows
 
     def set_customer_status(self, telegram_user_id: int, status: str) -> None:
         self.client.table("telegram_customers").update(
-            {"status": status, "updated_at": datetime.now(timezone.utc).isoformat()}
+            {
+                "status": status,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
         ).eq("telegram_user_id", telegram_user_id).execute()
 
     def recent_broadcasts(self, limit: int = 5) -> list[dict[str, Any]]:
