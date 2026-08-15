@@ -15,12 +15,11 @@ from app.db import Database
 
 
 def build_user_client(cfg: Config) -> TelegramClient:
-    if cfg.telethon_session:
-        session = StringSession(cfg.telethon_session)
-    else:
-        # Local development only. Hosted deployments must use TELETHON_SESSION.
-        session = "userbot"
-    return TelegramClient(session, cfg.api_id, cfg.api_hash)
+    return TelegramClient(
+        StringSession(cfg.telethon_session),
+        cfg.api_id,
+        cfg.api_hash,
+    )
 
 
 def _full_name(user: User) -> str:
