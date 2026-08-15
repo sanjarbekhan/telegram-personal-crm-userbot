@@ -22,6 +22,11 @@ from aiogram.types import (
 
 from app.config import Config
 from app.db import Database
+from app.lead_crm import (
+    ResolveUsernameFunc,
+    SendUserFunc,
+    build_lead_router,
+)
 from app.scheduling import (
     MAX_SCHEDULE_RECIPIENTS,
     format_local_datetime,
@@ -74,6 +79,8 @@ def is_admin(cfg: Config, user_id: int | None) -> bool:
 def main_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
+            [KeyboardButton(text="🆕 Lead qo‘shish"), KeyboardButton(text="📥 Leadlar")],
+            [KeyboardButton(text="⚡ Kechikkanlar"), KeyboardButton(text="📈 CRM Dashboard")],
             [KeyboardButton(text="⏰ Xabar rejalash"), KeyboardButton(text="🗓 Rejadagi xabarlar")],
             [KeyboardButton(text="📨 Broadcast yuborish")],
             [KeyboardButton(text="📅 Sana bo‘yicha mijozlar"), KeyboardButton(text="🔍 Mijoz qidirish")],
@@ -146,7 +153,13 @@ def schedule_list_keyboard(rows: list[dict]) -> InlineKeyboardMarkup | None:
     return InlineKeyboardMarkup(inline_keyboard=buttons) if buttons else None
 
 
-def create_dispatcher(cfg: Config, db: Database, scan_func: ScanFunc) -> Dispatcher:
+def create_dispatcher(
+    cfg: Config,
+    db: Database,
+    scan_func: ScanFunc,
+    send_user_message: SendUserFunc,
+    resolve_username: ResolveUsernameFunc,
+) -> Dispatcher:
     router = Router()
 
     async def reject_non_admin(message: Message) -> bool:
@@ -162,8 +175,8 @@ def create_dispatcher(cfg: Config, db: Database, scan_func: ScanFunc) -> Dispatc
         await state.clear()
         await message.answer(
             "✅ <b>Telegram Personal CRM</b>\n\n"
-            "Username va vaqt berib, xabarni shaxsiy Telegram akkauntingiz nomidan "
-            "rejalashingiz yoki mijozlarga follow-up yuborishingiz mumkin.",
+            "Leadlarni bosqichma-bosqich boshqaring, professional tayyor javoblarni "
+            "shaxsiy akkauntingizdan yuboring va javob bo‘lmasa xavfsiz follow-up ishlating.",
             parse_mode="HTML",
             reply_markup=main_menu(),
         )
@@ -182,6 +195,10 @@ def create_dispatcher(cfg: Config, db: Database, scan_func: ScanFunc) -> Dispatc
             return
         await message.answer(
             "<b>Asosiy imkoniyatlar</b>\n\n"
+            "🆕 <b>Lead qo‘shish</b> — username orqali yangi lead kartasi.\n"
+            "📥 <b>Leadlar</b> — status, checklist, izoh va tezkor javoblar.\n"
+            "⚡ <b>Kechikkanlar</b> — e’tibor talab qilayotgan leadlar.\n"
+            "📈 <b>CRM Dashboard</b> — lead, to‘lov va nashr ko‘rsatkichlari.\n"
             "⏰ <b>Xabar rejalash</b> — username, vaqt va matn kiriting.\n"
             "🗓 <b>Rejadagi xabarlar</b> — holatini ko‘ring yoki oldindan bekor qiling.\n"
             "📨 <b>Broadcast</b> — tanlangan kundagi CRM mijozlariga yuboring.\n\n"
@@ -229,6 +246,18 @@ def create_dispatcher(cfg: Config, db: Database, scan_func: ScanFunc) -> Dispatc
             )
             return
         db.set_customer_status(int(parts[1]), parts[2])
+        if parts[2] == "do_not_contact":
+            customer = db.get_customer_by_telegram_id(int(parts[1]))
+            if customer and customer.get("is_lead"):
+                db.update_lead_fields(
+                    customer["id"],
+                    pipeline_status="lost",
+                    next_action_at=None,
+                )
+                db.cancel_customer_followups(
+                    customer["id"],
+                    reason="Admin boshqa yozmaslikni belgiladi",
+                )
         await message.answer(
             f"✅ Status o‘zgardi: <code>{parts[1]}</code> → <b>{parts[2]}</b>",
             parse_mode="HTML",
@@ -613,5 +642,13 @@ def create_dispatcher(cfg: Config, db: Database, scan_func: ScanFunc) -> Dispatc
         )
 
     dp = Dispatcher(storage=MemoryStorage())
+    dp.include_router(
+        build_lead_router(
+            cfg,
+            db,
+            send_user_message,
+            resolve_username,
+        )
+    )
     dp.include_router(router)
     return dp

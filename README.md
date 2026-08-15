@@ -1,6 +1,6 @@
 # Telegram Personal CRM Userbot
 
-Shaxsiy Telegram akkaunti orqali CRM mijozlariga follow-up va oldindan rejalashtirilgan matnli xabar yuboradigan admin bot.
+“O‘zbekiston Bunyodkor yoshlari ensiklopediyasi” leadlarini shaxsiy Telegram akkaunti orqali professional boshqaradigan admin CRM bot.
 
 ## Imkoniyatlar
 
@@ -13,6 +13,12 @@ Shaxsiy Telegram akkaunti orqali CRM mijozlariga follow-up va oldindan rejalasht
 - FloodWait, xavfsiz yuborish oralig‘i va umumiy kunlik limitni hisobga oladi.
 - Admin tugmalariga darhol javob beradi; eskirgan callback xatosi worker’ni to‘xtatmaydi.
 - Faqat `ADMIN_TELEGRAM_ID` egasi admin paneldan foydalana oladi.
+- Username orqali lead qo‘shadi va har biri uchun alohida CRM karta yaratadi.
+- Lead bosqichi, to‘lov, anketa, foto, Instagram, hujjatlar va rozilik checklistini saqlaydi.
+- Professional tayyor javoblarni shaxsiy akkauntdan bir bosishda yuboradi.
+- Birinchi xabardan keyin 2, 24 va 72 soatlik shartli follow-up yaratadi.
+- Lead javob bersa yoki CRM bosqichi o‘zgarsa, qolgan follow-up’larni avtomatik bekor qiladi.
+- Har kuni Toshkent vaqti bilan belgilangan soatda CRM hisobotini adminga yuboradi.
 
 ## Texnologiyalar
 
@@ -64,7 +70,24 @@ Windows uchun virtual muhitni faollashtirish:
 .venv\Scripts\activate
 ```
 
-## 4. Rejadagi xabar
+## 4. Professional lead oqimi
+
+Admin botda:
+
+1. `🆕 Lead qo‘shish` orqali ariza qoldirgan odamning username’ini kiriting.
+2. Lead kartasidan `⚡ Birinchi xabar + 3 follow-up` tugmasini bosing.
+3. Birinchi professional xabar darhol shaxsiy akkauntingizdan yuboriladi.
+4. Javob bo‘lmasa 2, 24 va 72 soatdan keyingi muloyim eslatmalar ishlaydi.
+5. Lead javob bersa, eslatmalar bekor qilinadi va admin botga xabar keladi.
+6. `📌 Bosqich`, `✅ Checklist`, `📝 Izoh` va `🔗 Nashr havolasi` orqali jarayonni boshqaring.
+
+Bosqichlar: `new`, `contacted`, `interested`, `questionnaire`, `awaiting_documents`, `awaiting_payment`, `paid`, `drafting`, `review`, `published`, `lost`.
+
+`💬 Tayyor javoblar` ichida birinchi xabar, qisqa afzalliklar, anketa, foto/Instagram, to‘lov, maqola tayyorlanishi va nashr xabarlari mavjud. `APPLICATION_FORM_URL` yoki `PAYMENT_DETAILS` sozlanmagan bo‘lsa, tegishli tugma xavfsizlik uchun ko‘rsatilmaydi.
+
+`📈 CRM Dashboard` jami leadlar, bugungi leadlar, kechikkan amallar, to‘lovlar va nashrlar sonini ko‘rsatadi. Shu hisobot `DAILY_REPORT_HOUR` vaqtida har kuni avtomatik yuboriladi.
+
+## 5. Rejadagi xabar
 
 Admin botda:
 
@@ -78,7 +101,7 @@ Belgilangan vaqt kelganda worker xabarlarni shaxsiy akkaunt nomidan yuborishni b
 
 `🗓 Rejadagi xabarlar` tugmasi orqali oxirgi ishlarni ko‘rish va hali boshlanmagan xabarni bekor qilish mumkin.
 
-## 5. CRM broadcast
+## 6. CRM broadcast
 
 - `/scan 30` — oxirgi 30 kunlik private chatlarni bazaga tushiradi.
 - `📅 Sana bo‘yicha mijozlar` — tanlangan kundagi mijozlarni ko‘rsatadi.
@@ -86,7 +109,7 @@ Belgilangan vaqt kelganda worker xabarlarni shaxsiy akkaunt nomidan yuborishni b
 - `/status 123456789 do_not_contact` — mijozga boshqa yozilmasligini belgilaydi.
 - `/report` — oxirgi broadcast natijalarini ko‘rsatadi.
 
-## 6. Deploy
+## 7. Deploy
 
 Background Worker uchun:
 
@@ -111,6 +134,9 @@ app/
   admin_bot.py
   config.py
   db.py
+  dashboard.py
+  lead_crm.py
+  lead_templates.py
   main.py
   make_session.py
   scheduling.py

@@ -51,9 +51,21 @@ async def _process_due_scheduled_message(
     if not job:
         return False
 
+    if await db_call(db.should_cancel_followup, job):
+        await db_call(
+            db.mark_scheduled_message_cancelled,
+            job["id"],
+            "Lead javob berdi yoki CRM bosqichi o‘zgardi",
+        )
+        if job.get("customer_id"):
+            await db_call(db.refresh_customer_next_action, job["customer_id"])
+        return True
+
     recipient = await db_call(db.get_next_scheduled_recipient, job["id"])
     if not recipient:
         await db_call(db.recalc_scheduled_counts, job["id"])
+        if job.get("customer_id"):
+            await db_call(db.refresh_customer_next_action, job["customer_id"])
         return True
 
     await db_call(db.mark_scheduled_message_running, job["id"])
@@ -66,13 +78,31 @@ async def _process_due_scheduled_message(
             raise ValueError("Username shaxsiy Telegram foydalanuvchisiga tegishli emas")
         if entity.bot or entity.deleted or entity.is_self:
             raise ValueError("Bot, o'chirilgan yoki o'z akkauntingizga yuborib bo'lmaydi")
-        await client.send_message(entity, job["message_text"])
-        await db_call(
-            db.update_scheduled_recipient,
-            recipient["id"],
-            "sent",
-            telegram_user_id=entity.id,
-        )
+        known_customer = await db_call(db.get_customer_by_telegram_id, entity.id)
+        if known_customer and known_customer.get("status") == "do_not_contact":
+            await db_call(
+                db.update_scheduled_recipient,
+                recipient["id"],
+                "skipped",
+                error_text="Customer is do_not_contact",
+            )
+        elif await db_call(db.should_cancel_followup, job):
+            await db_call(
+                db.mark_scheduled_message_cancelled,
+                job["id"],
+                "Lead yuborishdan oldin javob berdi",
+            )
+            if job.get("customer_id"):
+                await db_call(db.refresh_customer_next_action, job["customer_id"])
+            return True
+        else:
+            await client.send_message(entity, job["message_text"])
+            await db_call(
+                db.update_scheduled_recipient,
+                recipient["id"],
+                "sent",
+                telegram_user_id=entity.id,
+            )
     except FloodWaitError as exc:
         await db_call(db.update_scheduled_recipient, recipient["id"], "pending")
         await notify_admin(
@@ -93,6 +123,11 @@ async def _process_due_scheduled_message(
     counts = await db_call(db.recalc_scheduled_counts, job["id"])
     refreshed = await db_call(db.get_scheduled_message, job["id"])
     if refreshed and refreshed.get("status") == "finished":
+        if refreshed.get("customer_id"):
+            await db_call(
+                db.refresh_customer_next_action,
+                refreshed["customer_id"],
+            )
         await notify_admin(
             admin_bot,
             cfg,

@@ -27,6 +27,15 @@ class Config:
     poll_seconds: int = 8
     schedule_poll_seconds: int = 5
     timezone: str = "Asia/Tashkent"
+    service_price_uzs: int = 39000
+    sample_article_url: str = "https://bunyodkor.com"
+    public_offer_url: str = "https://bunyodkor.com/ommaviy_ofertasi"
+    application_form_url: str = ""
+    payment_details: str = ""
+    daily_report_hour: int = 21
+    follow_up_first_hours: int = 2
+    follow_up_second_hours: int = 24
+    follow_up_final_hours: int = 72
 
     @staticmethod
     def load() -> "Config":
@@ -55,4 +64,31 @@ class Config:
             poll_seconds=int(os.getenv("POLL_SECONDS", "8")),
             schedule_poll_seconds=int(os.getenv("SCHEDULE_POLL_SECONDS", "5")),
             timezone=os.getenv("TIMEZONE", "Asia/Tashkent"),
+            service_price_uzs=int(os.getenv("SERVICE_PRICE_UZS", "39000")),
+            sample_article_url=os.getenv(
+                "SAMPLE_ARTICLE_URL",
+                "https://bunyodkor.com",
+            ),
+            public_offer_url=os.getenv(
+                "PUBLIC_OFFER_URL",
+                "https://bunyodkor.com/ommaviy_ofertasi",
+            ),
+            application_form_url=os.getenv("APPLICATION_FORM_URL", ""),
+            payment_details=os.getenv("PAYMENT_DETAILS", ""),
+            daily_report_hour=max(
+                0,
+                min(int(os.getenv("DAILY_REPORT_HOUR", "21")), 23),
+            ),
+            follow_up_first_hours=max(
+                1,
+                int(os.getenv("FOLLOW_UP_FIRST_HOURS", "2")),
+            ),
+            follow_up_second_hours=max(
+                1,
+                int(os.getenv("FOLLOW_UP_SECOND_HOURS", "24")),
+            ),
+            follow_up_final_hours=max(
+                1,
+                int(os.getenv("FOLLOW_UP_FINAL_HOURS", "72")),
+            ),
         )
