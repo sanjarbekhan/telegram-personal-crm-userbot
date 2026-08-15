@@ -11,7 +11,7 @@ class Config:
     api_id: int
     api_hash: str
     phone_number: str
-    telethon_session: str | None
+    telethon_session: str
 
     admin_bot_token: str
     admin_telegram_id: int
@@ -51,7 +51,7 @@ class Config:
             api_id=int(required("API_ID")),
             api_hash=required("API_HASH"),
             phone_number=required("PHONE_NUMBER"),
-            telethon_session=os.getenv("TELETHON_SESSION") or None,
+            telethon_session=required("TELETHON_SESSION"),
             admin_bot_token=required("ADMIN_BOT_TOKEN"),
             admin_telegram_id=int(required("ADMIN_TELEGRAM_ID")),
             supabase_url=required("SUPABASE_URL"),
