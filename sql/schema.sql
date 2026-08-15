@@ -144,8 +144,12 @@ create index if not exists idx_chat_messages_date
   on telegram_chat_messages(message_date);
 create index if not exists idx_chat_messages_user_date
   on telegram_chat_messages(telegram_user_id, message_date);
+create index if not exists idx_chat_messages_customer_id
+  on telegram_chat_messages(customer_id);
 create index if not exists idx_broadcast_logs_pending
   on telegram_broadcast_logs(status, created_at);
+create index if not exists idx_broadcast_logs_customer_id
+  on telegram_broadcast_logs(customer_id);
 create index if not exists idx_customers_status
   on telegram_customers(status);
 create index if not exists idx_customers_lead_pipeline
