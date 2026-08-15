@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 if TYPE_CHECKING:
     from app.config import Config
@@ -123,6 +124,19 @@ def format_price(value: int) -> str:
     return f"{value:,}".replace(",", " ") + " so‘m"
 
 
+def personalized_form_url(base_url: str, username: str | None) -> str:
+    """Add the lead username without discarding existing safe query parameters."""
+    clean_url = (base_url or "").strip()
+    clean_username = (username or "").strip().lstrip("@")
+    if not clean_url or not clean_username:
+        return clean_url
+
+    parts = urlsplit(clean_url)
+    query = [(key, value) for key, value in parse_qsl(parts.query) if key != "telegram"]
+    query.append(("telegram", clean_username))
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+
+
 def template_context(customer: dict[str, Any], cfg: Config) -> dict[str, str]:
     full_name = (customer.get("full_name") or "").strip()
     first_name = full_name.split()[0] if full_name else ""
@@ -132,7 +146,10 @@ def template_context(customer: dict[str, Any], cfg: Config) -> dict[str, str]:
         "price": format_price(cfg.service_price_uzs),
         "sample_url": cfg.sample_article_url,
         "offer_url": cfg.public_offer_url,
-        "form_url": cfg.application_form_url,
+        "form_url": personalized_form_url(
+            cfg.application_form_url,
+            customer.get("username"),
+        ),
         "payment_details": cfg.payment_details,
         "published_url": customer.get("published_url") or "",
     }

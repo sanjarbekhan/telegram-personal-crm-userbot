@@ -83,7 +83,7 @@ Admin botda:
 
 Bosqichlar: `new`, `contacted`, `interested`, `questionnaire`, `awaiting_documents`, `awaiting_payment`, `paid`, `drafting`, `review`, `published`, `lost`.
 
-`💬 Tayyor javoblar` ichida birinchi xabar, qisqa afzalliklar, anketa, foto/Instagram, to‘lov, maqola tayyorlanishi va nashr xabarlari mavjud. `APPLICATION_FORM_URL` yoki `PAYMENT_DETAILS` sozlanmagan bo‘lsa, tegishli tugma xavfsizlik uchun ko‘rsatilmaydi.
+`💬 Tayyor javoblar` ichida birinchi xabar, qisqa afzalliklar, anketa, foto/Instagram, to‘lov, maqola tayyorlanishi va nashr xabarlari mavjud. `APPLICATION_FORM_URL` yoki `PAYMENT_DETAILS` sozlanmagan bo‘lsa, tegishli tugma xavfsizlik uchun ko‘rsatilmaydi. Production uchun `APPLICATION_FORM_URL=https://www.bunyodkor.com/anketa` qiymatini ishlating; bot havolaga leadning Telegram username’ini avtomatik qo‘shadi.
 
 `📈 CRM Dashboard` jami leadlar, bugungi leadlar, kechikkan amallar, to‘lovlar va nashrlar sonini ko‘rsatadi. Shu hisobot `DAILY_REPORT_HOUR` vaqtida har kuni avtomatik yuboriladi.
 

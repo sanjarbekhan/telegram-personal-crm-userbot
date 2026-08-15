@@ -6,6 +6,7 @@ from app.lead_templates import (
     available_quick_replies,
     build_followup_plan,
     format_price,
+    personalized_form_url,
     render_template,
 )
 
@@ -60,6 +61,23 @@ class LeadTemplateTests(TestCase):
         )
         self.assertIn("payment_request", keys)
         self.assertIn("questionnaire", keys)
+
+    def test_questionnaire_link_is_personalized_for_the_lead(self) -> None:
+        text = render_template(
+            "questionnaire",
+            CUSTOMER,
+            config(application_form_url="https://www.bunyodkor.com/anketa?source=crm"),
+        )
+        self.assertIn(
+            "https://www.bunyodkor.com/anketa?source=crm&telegram=gulnoza_01",
+            text,
+        )
+
+    def test_form_url_without_username_stays_usable(self) -> None:
+        self.assertEqual(
+            personalized_form_url("https://www.bunyodkor.com/anketa", None),
+            "https://www.bunyodkor.com/anketa",
+        )
 
     def test_followup_plan_is_ordered_and_personalized(self) -> None:
         start = datetime(2026, 8, 16, 10, 0, tzinfo=timezone.utc)
