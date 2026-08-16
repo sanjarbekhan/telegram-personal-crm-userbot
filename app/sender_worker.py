@@ -41,6 +41,34 @@ async def _safe_delay(db: Database, cfg: Config) -> None:
     await asyncio.sleep(random.randint(min_delay, max_delay))
 
 
+async def _resolve_broadcast_user(
+    client: TelegramClient,
+    customer: dict,
+    telegram_user_id: int,
+) -> User:
+    username = (customer.get("username") or "").strip().lstrip("@")
+    if username:
+        entity = await client.get_entity(f"@{username}")
+    else:
+        try:
+            entity = await client.get_entity(telegram_user_id)
+        except ValueError:
+            entity = None
+            async for dialog in client.iter_dialogs():
+                candidate = getattr(dialog, "entity", None)
+                if dialog.is_user and getattr(candidate, "id", None) == telegram_user_id:
+                    entity = candidate
+                    break
+            if entity is None:
+                raise ValueError("Telegram dialogi topilmadi")
+
+    if not isinstance(entity, User):
+        raise ValueError("Qabul qiluvchi shaxsiy Telegram foydalanuvchisi emas")
+    if entity.bot or entity.deleted or entity.is_self:
+        raise ValueError("Bot, o‘chirilgan yoki o‘z akkauntingizga yuborib bo‘lmaydi")
+    return entity
+
+
 async def _process_due_scheduled_message(
     client: TelegramClient,
     admin_bot: Bot,
@@ -181,11 +209,11 @@ async def _process_broadcast(
     await db_call(db.update_log, log["id"], "processing")
 
     try:
-        entity = await client.get_entity(int(log["telegram_user_id"]))
-        if not isinstance(entity, User):
-            raise ValueError("Qabul qiluvchi shaxsiy Telegram foydalanuvchisi emas")
-        if entity.bot or entity.deleted or entity.is_self:
-            raise ValueError("Bot, o‘chirilgan yoki o‘z akkauntingizga yuborib bo‘lmaydi")
+        entity = await _resolve_broadcast_user(
+            client,
+            customer,
+            int(log["telegram_user_id"]),
+        )
         await client.send_message(
             entity,
             broadcast["message_text"],

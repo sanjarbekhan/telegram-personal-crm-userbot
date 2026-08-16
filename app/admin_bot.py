@@ -35,7 +35,7 @@ from app.scheduling import (
 )
 
 ScanFunc = Callable[[int], Awaitable[int]]
-ScanContactsFunc = Callable[[], Awaitable[int]]
+ScanContactsFunc = Callable[[], Awaitable[list[int]]]
 
 
 class BroadcastStates(StatesGroup):
@@ -517,8 +517,11 @@ def create_dispatcher(
             "Faqat ism, username va Telegram ID olinadi; eski xabar matnlari import qilinmaydi."
         )
         try:
-            imported_count = await scan_contacts_func()
-            customers = await asyncio.to_thread(db.get_all_broadcast_customers)
+            imported_user_ids = await scan_contacts_func()
+            customers = await asyncio.to_thread(
+                db.get_broadcast_customers,
+                imported_user_ids,
+            )
         except Exception as exc:
             await message.answer(
                 f"❌ Kontaktlarni yuklashda xato: {html.escape(str(exc))}",
@@ -541,7 +544,7 @@ def create_dispatcher(
         )
         await state.set_state(BroadcastStates.waiting_message)
         await message.answer(
-            f"✅ Telegramdan <b>{imported_count}</b> ta shaxsiy suhbat tekshirildi.\n"
+            f"✅ Telegramdan <b>{len(imported_user_ids)}</b> ta shaxsiy suhbat tekshirildi.\n"
             f"Broadcast uchun <b>{len(customers)}</b> ta kontakt tayyor.\n\n"
             "Botlar, guruhlar, o‘chirilgan akkauntlar va <code>do_not_contact</code> "
             "kontaktlar chiqarib tashlandi.\n\n"

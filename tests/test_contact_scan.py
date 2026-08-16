@@ -46,7 +46,7 @@ class ContactScanTests(IsolatedAsyncioTestCase):
         ]
         db = FakeDatabase()
 
-        count = await scan_private_contacts(FakeClient(dialogs), db)
+        telegram_user_ids = await scan_private_contacts(FakeClient(dialogs), db)
 
-        self.assertEqual(count, 1)
+        self.assertEqual(telegram_user_ids, [101])
         self.assertEqual(db.saved, [(101, "Ali Valiyev", "ali_01", None)])

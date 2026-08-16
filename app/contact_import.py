@@ -18,9 +18,9 @@ def is_eligible_private_contact(user: Any) -> bool:
     )
 
 
-async def scan_private_contacts(client: Any, db: Any) -> int:
+async def scan_private_contacts(client: Any, db: Any) -> list[int]:
     """Import only human private-dialog metadata, never historical message text."""
-    saved_count = 0
+    telegram_user_ids: list[int] = []
 
     async for dialog in client.iter_dialogs():
         if not getattr(dialog, "is_user", False):
@@ -36,6 +36,6 @@ async def scan_private_contacts(client: Any, db: Any) -> int:
             getattr(entity, "username", None),
             getattr(entity, "phone", None),
         )
-        saved_count += 1
+        telegram_user_ids.append(int(entity.id))
 
-    return saved_count
+    return telegram_user_ids

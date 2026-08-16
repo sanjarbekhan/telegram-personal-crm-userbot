@@ -43,7 +43,7 @@ async def main() -> None:
     async def scan_func(days: int) -> int:
         return await scan_recent_private_chats(user_client, db, days=days)
 
-    async def scan_contacts_func() -> int:
+    async def scan_contacts_func() -> list[int]:
         return await scan_private_contacts(user_client, db)
 
     async def resolve_username(username: str) -> dict:

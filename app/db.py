@@ -111,25 +111,26 @@ class Database:
             .execute()
         ).data or []
 
-    def get_all_broadcast_customers(self) -> list[dict[str, Any]]:
-        """Return every contact eligible for broadcast, including more than 1000 rows."""
-        customers: list[dict[str, Any]] = []
-        page_size = 1000
-        offset = 0
+    def get_broadcast_customers(
+        self,
+        telegram_user_ids: list[int],
+    ) -> list[dict[str, Any]]:
+        """Return eligible customers for the exact private dialogs found by Telethon."""
+        unique_user_ids = list(dict.fromkeys(int(value) for value in telegram_user_ids))
+        if not unique_user_ids:
+            return []
 
-        while True:
+        customers: list[dict[str, Any]] = []
+        for start in range(0, len(unique_user_ids), 500):
             rows = (
                 self.client.table("telegram_customers")
                 .select("*")
+                .in_("telegram_user_id", unique_user_ids[start : start + 500])
                 .neq("status", "do_not_contact")
                 .order("created_at")
-                .range(offset, offset + page_size - 1)
                 .execute()
             ).data or []
             customers.extend(rows)
-            if len(rows) < page_size:
-                break
-            offset += page_size
 
         return customers
 
