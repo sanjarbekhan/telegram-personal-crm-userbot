@@ -7,94 +7,288 @@ from datetime import datetime, timezone
 from aiogram import Bot
 from telethon import TelegramClient
 from telethon.errors import FloodWaitError
+from telethon.tl.types import User
 
 from app.config import Config
 from app.db import Database
+from app.retry import is_transient_connection_error, to_thread_with_retry
+
+
+async def db_call(func, /, *args, **kwargs):
+    """Keep synchronous Supabase HTTP calls off aiogram's event loop."""
+    return await to_thread_with_retry(func, *args, **kwargs)
 
 
 async def notify_admin(bot: Bot, cfg: Config, text: str) -> None:
     try:
         await bot.send_message(cfg.admin_telegram_id, text)
     except Exception:
-        # Avoid crashing the sender if Telegram Bot API notification fails.
         pass
 
 
-async def sender_loop(client: TelegramClient, bot: Bot, db: Database, cfg: Config) -> None:
+async def _safe_delay(db: Database, cfg: Config) -> None:
+    min_delay = await db_call(
+        db.get_setting_int,
+        "min_delay_seconds",
+        cfg.min_delay_seconds,
+    )
+    max_delay = await db_call(
+        db.get_setting_int,
+        "max_delay_seconds",
+        cfg.max_delay_seconds,
+    )
+    if max_delay < min_delay:
+        max_delay = min_delay
+    await asyncio.sleep(random.randint(min_delay, max_delay))
+
+
+async def _resolve_broadcast_user(
+    client: TelegramClient,
+    customer: dict,
+    telegram_user_id: int,
+) -> User:
+    username = (customer.get("username") or "").strip().lstrip("@")
+    if username:
+        entity = await client.get_entity(f"@{username}")
+    else:
+        try:
+            entity = await client.get_entity(telegram_user_id)
+        except ValueError:
+            entity = None
+            async for dialog in client.iter_dialogs():
+                candidate = getattr(dialog, "entity", None)
+                if dialog.is_user and getattr(candidate, "id", None) == telegram_user_id:
+                    entity = candidate
+                    break
+            if entity is None:
+                raise ValueError("Telegram dialogi topilmadi")
+
+    if not isinstance(entity, User):
+        raise ValueError("Qabul qiluvchi shaxsiy Telegram foydalanuvchisi emas")
+    if entity.bot or entity.deleted or entity.is_self:
+        raise ValueError("Bot, o‘chirilgan yoki o‘z akkauntingizga yuborib bo‘lmaydi")
+    return entity
+
+
+async def _process_due_scheduled_message(
+    client: TelegramClient,
+    admin_bot: Bot,
+    db: Database,
+    cfg: Config,
+) -> bool:
+    job = await db_call(db.get_due_scheduled_message)
+    if not job:
+        return False
+
+    if await db_call(db.should_cancel_followup, job):
+        await db_call(
+            db.mark_scheduled_message_cancelled,
+            job["id"],
+            "Lead javob berdi yoki CRM bosqichi o‘zgardi",
+        )
+        if job.get("customer_id"):
+            await db_call(db.refresh_customer_next_action, job["customer_id"])
+        return True
+
+    recipient = await db_call(db.get_next_scheduled_recipient, job["id"])
+    if not recipient:
+        await db_call(db.recalc_scheduled_counts, job["id"])
+        if job.get("customer_id"):
+            await db_call(db.refresh_customer_next_action, job["customer_id"])
+        return True
+
+    await db_call(db.mark_scheduled_message_running, job["id"])
+    await db_call(db.update_scheduled_recipient, recipient["id"], "processing")
+    username = recipient["username"]
+
+    try:
+        entity = await client.get_entity(f"@{username}")
+        if not isinstance(entity, User):
+            raise ValueError("Username shaxsiy Telegram foydalanuvchisiga tegishli emas")
+        if entity.bot or entity.deleted or entity.is_self:
+            raise ValueError("Bot, o'chirilgan yoki o'z akkauntingizga yuborib bo'lmaydi")
+        known_customer = await db_call(db.get_customer_by_telegram_id, entity.id)
+        if known_customer and known_customer.get("status") == "do_not_contact":
+            await db_call(
+                db.update_scheduled_recipient,
+                recipient["id"],
+                "skipped",
+                error_text="Customer is do_not_contact",
+            )
+        elif await db_call(db.should_cancel_followup, job):
+            await db_call(
+                db.mark_scheduled_message_cancelled,
+                job["id"],
+                "Lead yuborishdan oldin javob berdi",
+            )
+            if job.get("customer_id"):
+                await db_call(db.refresh_customer_next_action, job["customer_id"])
+            return True
+        else:
+            await client.send_message(entity, job["message_text"])
+            await db_call(
+                db.update_scheduled_recipient,
+                recipient["id"],
+                "sent",
+                telegram_user_id=entity.id,
+            )
+    except FloodWaitError as exc:
+        await db_call(db.update_scheduled_recipient, recipient["id"], "pending")
+        await notify_admin(
+            admin_bot,
+            cfg,
+            f"⏳ Telegram FloodWait: {exc.seconds} sekund. Rejadagi xabar kutadi.",
+        )
+        await asyncio.sleep(min(exc.seconds + 5, 600))
+        return True
+    except Exception as exc:
+        if is_transient_connection_error(exc):
+            await db_call(db.update_scheduled_recipient, recipient["id"], "pending")
+            await asyncio.sleep(5)
+            return True
+        else:
+            await db_call(
+                db.update_scheduled_recipient,
+                recipient["id"],
+                "failed",
+                error_text=str(exc),
+            )
+
+    counts = await db_call(db.recalc_scheduled_counts, job["id"])
+    refreshed = await db_call(db.get_scheduled_message, job["id"])
+    if refreshed and refreshed.get("status") == "finished":
+        if refreshed.get("customer_id"):
+            await db_call(
+                db.refresh_customer_next_action,
+                refreshed["customer_id"],
+            )
+        await notify_admin(
+            admin_bot,
+            cfg,
+            "⏰ Rejadagi xabar yakunlandi.\n"
+            f"✅ Yuborildi: {counts['sent_count']}\n"
+            f"❌ Xato: {counts['failed_count']}\n"
+            f"⏭ O‘tkazildi: {counts['skipped_count']}",
+        )
+    else:
+        await _safe_delay(db, cfg)
+    return True
+
+
+async def _process_broadcast(
+    client: TelegramClient,
+    admin_bot: Bot,
+    db: Database,
+    cfg: Config,
+) -> bool:
+    log = await db_call(db.get_next_pending_log)
+    if not log:
+        return False
+
+    broadcast = await db_call(db.get_broadcast, log["broadcast_id"])
+    if not broadcast or broadcast.get("status") == "cancelled":
+        await db_call(
+            db.update_log,
+            log["id"],
+            "skipped",
+            "Broadcast cancelled or not found",
+        )
+        return True
+
+    customer = await db_call(db.get_customer_by_id, log["customer_id"])
+    if not customer:
+        await db_call(db.update_log, log["id"], "skipped", "Customer not found")
+        await db_call(db.recalc_broadcast_counts, log["broadcast_id"])
+        return True
+
+    if customer.get("status") == "do_not_contact":
+        await db_call(
+            db.update_log,
+            log["id"],
+            "skipped",
+            "Customer is do_not_contact",
+        )
+        await db_call(db.recalc_broadcast_counts, log["broadcast_id"])
+        return True
+
+    await db_call(db.mark_broadcast_running, log["broadcast_id"])
+    await db_call(db.update_log, log["id"], "processing")
+
+    try:
+        entity = await _resolve_broadcast_user(
+            client,
+            customer,
+            int(log["telegram_user_id"]),
+        )
+        await client.send_message(
+            entity,
+            broadcast["message_text"],
+        )
+        await db_call(db.update_log, log["id"], "sent")
+    except FloodWaitError as exc:
+        await db_call(db.update_log, log["id"], "pending")
+        await notify_admin(
+            admin_bot,
+            cfg,
+            f"⏳ FloodWait: {exc.seconds} sekund kutyapman.",
+        )
+        await asyncio.sleep(min(exc.seconds + 5, 600))
+        return True
+    except Exception as exc:
+        if is_transient_connection_error(exc):
+            await db_call(db.update_log, log["id"], "pending")
+            await asyncio.sleep(5)
+            return True
+        await db_call(db.update_log, log["id"], "failed", str(exc))
+
+    counts = await db_call(db.recalc_broadcast_counts, log["broadcast_id"])
+    refreshed = await db_call(db.get_broadcast, log["broadcast_id"])
+    if refreshed and refreshed.get("status") == "finished":
+        scope_text = (
+            "Barcha kontaktlar"
+            if refreshed.get("target_scope") == "all"
+            else f"Sana: {refreshed.get('target_date')}"
+        )
+        await notify_admin(
+            admin_bot,
+            cfg,
+            "📊 Broadcast tugadi:\n"
+            f"Qamrov: {scope_text}\n"
+            f"Jami: {refreshed.get('total_count')}\n"
+            f"✅ Yuborildi: {counts['sent_count']}\n"
+            f"❌ Xato: {counts['failed_count']}\n"
+            f"⏭ O‘tkazildi: {counts['skipped_count']}\n"
+            f"Tugagan vaqt: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
+        )
+    await _safe_delay(db, cfg)
+    return True
+
+
+async def sender_loop(
+    client: TelegramClient,
+    bot: Bot,
+    db: Database,
+    cfg: Config,
+) -> None:
     await notify_admin(bot, cfg, "✅ Sender worker ishga tushdi.")
 
     while True:
         try:
-            daily_limit = db.get_setting_int("daily_send_limit", cfg.daily_send_limit)
-            sent_today = db.get_daily_sent_count()
-            if sent_today >= daily_limit:
+            daily_limit = await db_call(
+                db.get_setting_int,
+                "daily_send_limit",
+                cfg.daily_send_limit,
+            )
+            if await db_call(db.get_daily_sent_count) >= daily_limit:
                 await asyncio.sleep(60)
                 continue
 
-            log = db.get_next_pending_log()
-            if not log:
-                await asyncio.sleep(cfg.poll_seconds)
+            # Rejadagi xabarlar vaqtga bog'liq, shuning uchun birinchi tekshiriladi.
+            if await _process_due_scheduled_message(client, bot, db, cfg):
                 continue
-
-            broadcast = db.get_broadcast(log["broadcast_id"])
-            if not broadcast or broadcast.get("status") == "cancelled":
-                db.update_log(log["id"], "skipped", "Broadcast cancelled or not found")
+            if await _process_broadcast(client, bot, db, cfg):
                 continue
-
-            customer = db.get_customer_by_id(log["customer_id"])
-            if not customer:
-                db.update_log(log["id"], "skipped", "Customer not found")
-                db.recalc_broadcast_counts(log["broadcast_id"])
-                continue
-
-            if customer.get("status") == "do_not_contact":
-                db.update_log(log["id"], "skipped", "Customer is do_not_contact")
-                db.recalc_broadcast_counts(log["broadcast_id"])
-                continue
-
-            db.mark_broadcast_running(log["broadcast_id"])
-            db.update_log(log["id"], "processing")
-
-            try:
-                await client.send_message(int(log["telegram_user_id"]), broadcast["message_text"])
-                db.update_log(log["id"], "sent")
-            except FloodWaitError as e:
-                # Respect Telegram flood wait. For very long waits, stop this item and report.
-                if e.seconds <= 600:
-                    await notify_admin(bot, cfg, f"⏳ FloodWait: {e.seconds} sekund kutyapman.")
-                    await asyncio.sleep(e.seconds + 5)
-                    try:
-                        await client.send_message(int(log["telegram_user_id"]), broadcast["message_text"])
-                        db.update_log(log["id"], "sent")
-                    except Exception as retry_error:
-                        db.update_log(log["id"], "failed", str(retry_error))
-                else:
-                    db.update_log(log["id"], "failed", f"FloodWait too long: {e.seconds} seconds")
-                    await notify_admin(bot, cfg, f"⚠️ FloodWait juda uzun: {e.seconds} sekund. Yuborish to‘xtatildi.")
-            except Exception as send_error:
-                db.update_log(log["id"], "failed", str(send_error))
-
-            counts = db.recalc_broadcast_counts(log["broadcast_id"])
-            refreshed = db.get_broadcast(log["broadcast_id"])
-            if refreshed and refreshed.get("status") == "finished":
-                await notify_admin(
-                    bot,
-                    cfg,
-                    "📊 Broadcast tugadi:\n"
-                    f"Sana: {refreshed.get('target_date')}\n"
-                    f"Jami: {refreshed.get('total_count')}\n"
-                    f"✅ Yuborildi: {counts['sent_count']}\n"
-                    f"❌ Xato: {counts['failed_count']}\n"
-                    f"⏭ O‘tkazildi: {counts['skipped_count']}\n"
-                    f"Tugagan vaqt: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
-                )
-
-            min_delay = db.get_setting_int("min_delay_seconds", cfg.min_delay_seconds)
-            max_delay = db.get_setting_int("max_delay_seconds", cfg.max_delay_seconds)
-            if max_delay < min_delay:
-                max_delay = min_delay
-            await asyncio.sleep(random.randint(min_delay, max_delay))
-
-        except Exception as loop_error:
-            await notify_admin(bot, cfg, f"⚠️ Sender worker xatosi: {loop_error}")
+            await asyncio.sleep(min(cfg.poll_seconds, cfg.schedule_poll_seconds))
+        except Exception as exc:
+            await notify_admin(bot, cfg, f"⚠️ Sender worker xatosi: {exc}")
             await asyncio.sleep(15)

@@ -1,0 +1,47 @@
+from __future__ import annotations
+
+from typing import Any
+
+from app.retry import async_with_retry, to_thread_with_retry
+
+
+def contact_full_name(user: Any) -> str:
+    parts = [getattr(user, "first_name", None), getattr(user, "last_name", None)]
+    return " ".join(part for part in parts if part) or "Unknown"
+
+
+def is_eligible_private_contact(user: Any) -> bool:
+    return bool(
+        user
+        and not getattr(user, "bot", False)
+        and not getattr(user, "is_self", False)
+        and not getattr(user, "deleted", False)
+    )
+
+
+async def scan_private_contacts(client: Any, db: Any) -> list[int]:
+    """Import only human private-dialog metadata, never historical message text."""
+    async def _scan_once() -> list[int]:
+        if hasattr(client, "is_connected") and not client.is_connected():
+            await client.connect()
+
+        telegram_user_ids: list[int] = []
+        async for dialog in client.iter_dialogs():
+            if not getattr(dialog, "is_user", False):
+                continue
+            entity = getattr(dialog, "entity", None)
+            if not is_eligible_private_contact(entity):
+                continue
+
+            await to_thread_with_retry(
+                db.upsert_customer,
+                entity.id,
+                contact_full_name(entity),
+                getattr(entity, "username", None),
+                getattr(entity, "phone", None),
+            )
+            telegram_user_ids.append(int(entity.id))
+
+        return telegram_user_ids
+
+    return await async_with_retry(_scan_once)
