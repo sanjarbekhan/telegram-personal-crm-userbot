@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import html
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -13,6 +12,7 @@ from telethon.tl.types import User
 from app.contact_import import scan_private_contacts
 from app.config import Config
 from app.db import Database
+from app.retry import to_thread_with_retry
 
 
 def build_user_client(cfg: Config) -> TelegramClient:
@@ -49,7 +49,7 @@ async def save_message_from_event(
         return None, 0
 
     message = event.message
-    customer = await asyncio.to_thread(
+    customer = await to_thread_with_retry(
         db.upsert_customer,
         chat.id,
         _full_name(chat),
@@ -58,7 +58,7 @@ async def save_message_from_event(
     )
     direction = "outgoing" if bool(message.out) else "incoming"
     created_at = message.date or datetime.now(timezone.utc)
-    await asyncio.to_thread(
+    await to_thread_with_retry(
         db.save_chat_message,
         customer["id"],
         chat.id,
@@ -70,8 +70,8 @@ async def save_message_from_event(
     )
 
     if direction == "incoming":
-        return await asyncio.to_thread(db.handle_incoming_lead_reply, chat.id)
-    return await asyncio.to_thread(db.get_customer_by_id, customer["id"]), 0
+        return await to_thread_with_retry(db.handle_incoming_lead_reply, chat.id)
+    return await to_thread_with_retry(db.get_customer_by_id, customer["id"]), 0
 
 
 def register_userbot_handlers(
@@ -132,7 +132,7 @@ async def scan_recent_private_chats(
         if not _is_valid_customer_user(entity):
             continue
 
-        customer = await asyncio.to_thread(
+        customer = await to_thread_with_retry(
             db.upsert_customer,
             entity.id,
             _full_name(entity),
@@ -151,7 +151,7 @@ async def scan_recent_private_chats(
             if not message.id:
                 continue
 
-            await asyncio.to_thread(
+            await to_thread_with_retry(
                 db.save_chat_message,
                 customer["id"],
                 entity.id,

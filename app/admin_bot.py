@@ -33,6 +33,7 @@ from app.scheduling import (
     normalize_usernames,
     parse_local_datetime,
 )
+from app.retry import to_thread_with_retry
 
 ScanFunc = Callable[[int], Awaitable[int]]
 ScanContactsFunc = Callable[[], Awaitable[list[int]]]
@@ -518,7 +519,7 @@ def create_dispatcher(
         )
         try:
             imported_user_ids = await scan_contacts_func()
-            customers = await asyncio.to_thread(
+            customers = await to_thread_with_retry(
                 db.get_broadcast_customers,
                 imported_user_ids,
             )
@@ -672,7 +673,7 @@ def create_dispatcher(
                 )
             await state.clear()
             return
-        broadcast = await asyncio.to_thread(
+        broadcast = await to_thread_with_retry(
             db.create_broadcast,
             target_date,
             message_text,

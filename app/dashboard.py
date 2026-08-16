@@ -9,6 +9,7 @@ from aiogram import Bot
 from app.config import Config
 from app.db import Database
 from app.lead_crm import dashboard_text
+from app.retry import to_thread_with_retry
 
 
 async def daily_dashboard_loop(bot: Bot, db: Database, cfg: Config) -> None:
@@ -21,13 +22,13 @@ async def daily_dashboard_loop(bot: Bot, db: Database, cfg: Config) -> None:
         try:
             now = datetime.now(local_zone)
             report_date = now.date().isoformat()
-            last_sent = await asyncio.to_thread(
+            last_sent = await to_thread_with_retry(
                 db.get_setting,
                 "last_daily_dashboard_date",
                 "",
             )
             if now.hour >= cfg.daily_report_hour and last_sent != report_date:
-                data = await asyncio.to_thread(db.get_lead_dashboard, cfg.timezone)
+                data = await to_thread_with_retry(db.get_lead_dashboard, cfg.timezone)
                 await bot.send_message(
                     cfg.admin_telegram_id,
                     "🌙 <b>Kunlik CRM hisoboti</b>\n\n"
@@ -38,7 +39,7 @@ async def daily_dashboard_loop(bot: Bot, db: Database, cfg: Config) -> None:
                     ),
                     parse_mode="HTML",
                 )
-                await asyncio.to_thread(
+                await to_thread_with_retry(
                     db.set_setting,
                     "last_daily_dashboard_date",
                     report_date,

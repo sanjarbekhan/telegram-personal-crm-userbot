@@ -11,11 +11,12 @@ from telethon.tl.types import User
 
 from app.config import Config
 from app.db import Database
+from app.retry import is_transient_connection_error, to_thread_with_retry
 
 
 async def db_call(func, /, *args, **kwargs):
     """Keep synchronous Supabase HTTP calls off aiogram's event loop."""
-    return await asyncio.to_thread(func, *args, **kwargs)
+    return await to_thread_with_retry(func, *args, **kwargs)
 
 
 async def notify_admin(bot: Bot, cfg: Config, text: str) -> None:
@@ -141,12 +142,17 @@ async def _process_due_scheduled_message(
         await asyncio.sleep(min(exc.seconds + 5, 600))
         return True
     except Exception as exc:
-        await db_call(
-            db.update_scheduled_recipient,
-            recipient["id"],
-            "failed",
-            error_text=str(exc),
-        )
+        if is_transient_connection_error(exc):
+            await db_call(db.update_scheduled_recipient, recipient["id"], "pending")
+            await asyncio.sleep(5)
+            return True
+        else:
+            await db_call(
+                db.update_scheduled_recipient,
+                recipient["id"],
+                "failed",
+                error_text=str(exc),
+            )
 
     counts = await db_call(db.recalc_scheduled_counts, job["id"])
     refreshed = await db_call(db.get_scheduled_message, job["id"])
@@ -229,6 +235,10 @@ async def _process_broadcast(
         await asyncio.sleep(min(exc.seconds + 5, 600))
         return True
     except Exception as exc:
+        if is_transient_connection_error(exc):
+            await db_call(db.update_log, log["id"], "pending")
+            await asyncio.sleep(5)
+            return True
         await db_call(db.update_log, log["id"], "failed", str(exc))
 
     counts = await db_call(db.recalc_broadcast_counts, log["broadcast_id"])

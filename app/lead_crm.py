@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import html
 import re
 from datetime import datetime, timezone
@@ -24,6 +23,7 @@ from app.lead_templates import (
     render_template,
 )
 from app.scheduling import format_local_datetime, normalize_usernames
+from app.retry import to_thread_with_retry
 
 
 SendUserFunc = Callable[[int, str], Awaitable[None]]
@@ -68,7 +68,7 @@ class LeadPublishedStates(StatesGroup):
 
 
 async def db_call(func, /, *args, **kwargs):
-    return await asyncio.to_thread(func, *args, **kwargs)
+    return await to_thread_with_retry(func, *args, **kwargs)
 
 
 async def safe_callback_answer(
