@@ -10,6 +10,7 @@ from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl.types import User
 
+from app.contact_import import scan_private_contacts
 from app.config import Config
 from app.db import Database
 

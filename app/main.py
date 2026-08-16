@@ -7,6 +7,7 @@ from aiogram import Bot
 from telethon.tl.types import User
 
 from app.admin_bot import create_dispatcher
+from app.contact_import import scan_private_contacts
 from app.config import Config
 from app.dashboard import daily_dashboard_loop
 from app.db import Database
@@ -42,6 +43,9 @@ async def main() -> None:
     async def scan_func(days: int) -> int:
         return await scan_recent_private_chats(user_client, db, days=days)
 
+    async def scan_contacts_func() -> int:
+        return await scan_private_contacts(user_client, db)
+
     async def resolve_username(username: str) -> dict:
         entity = await user_client.get_entity(f"@{username.lstrip('@')}")
         if not isinstance(entity, User):
@@ -71,6 +75,7 @@ async def main() -> None:
         cfg,
         db,
         scan_func,
+        scan_contacts_func,
         send_user_message=send_user_message,
         resolve_username=resolve_username,
     )

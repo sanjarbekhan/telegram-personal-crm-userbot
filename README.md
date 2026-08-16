@@ -7,6 +7,7 @@
 - Telethon orqali shaxsiy Telegram akkauntiga ulanadi.
 - Private chatlar va mijozlarni Supabase PostgreSQL bazasiga saqlaydi.
 - Tanlangan kundagi mijozlarga navbat bilan follow-up yuboradi.
+- Barcha shaxsiy Telegram suhbatlaridan faqat kontakt metadata’sini import qilib, tasdiqdan keyin umumiy broadcast yuboradi.
 - Bir yoki bir nechta `@username` uchun aniq sana-vaqtga xabar rejalaydi.
 - Rejadagi xabarni oldindan ko‘rsatadi, tasdiqlatadi, statuslarni ko‘rsatadi va yuborilishidan oldin bekor qiladi.
 - Har bir username bo‘yicha `sent`, `failed` yoki `skipped` natijasini saqlaydi.
@@ -106,8 +107,11 @@ Belgilangan vaqt kelganda worker xabarlarni shaxsiy akkaunt nomidan yuborishni b
 - `/scan 30` — oxirgi 30 kunlik private chatlarni bazaga tushiradi.
 - `📅 Sana bo‘yicha mijozlar` — tanlangan kundagi mijozlarni ko‘rsatadi.
 - `📨 Broadcast yuborish` — shu mijozlarga follow-up navbatini yaratadi.
+- `👥 Barchaga broadcast` — barcha shaxsiy suhbatlardagi inson kontaktlarini yuklaydi va umumiy navbat yaratadi. Eski xabarlarning matni import qilinmaydi.
 - `/status 123456789 do_not_contact` — mijozga boshqa yozilmasligini belgilaydi.
 - `/report` — oxirgi broadcast natijalarini ko‘rsatadi.
+
+Umumiy broadcast botlar, guruhlar, o‘chirilgan akkauntlar, o‘z akkauntingiz va `do_not_contact` statusidagi kontaktlarni avtomatik o‘tkazib yuboradi. Jo‘natishdan oldin kontaktlar soni, taxminiy vaqt va to‘liq xabar preview’i ko‘rsatiladi. Katta navbat kunlik limitga yetganda to‘xtab, keyingi kuni avtomatik davom etadi.
 
 ## 7. Deploy
 

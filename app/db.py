@@ -111,17 +111,47 @@ class Database:
             .execute()
         ).data or []
 
+    def get_all_broadcast_customers(self) -> list[dict[str, Any]]:
+        """Return every contact eligible for broadcast, including more than 1000 rows."""
+        customers: list[dict[str, Any]] = []
+        page_size = 1000
+        offset = 0
+
+        while True:
+            rows = (
+                self.client.table("telegram_customers")
+                .select("*")
+                .neq("status", "do_not_contact")
+                .order("created_at")
+                .range(offset, offset + page_size - 1)
+                .execute()
+            ).data or []
+            customers.extend(rows)
+            if len(rows) < page_size:
+                break
+            offset += page_size
+
+        return customers
+
     def create_broadcast(
         self,
-        target_date: str,
+        target_date: str | None,
         message_text: str,
         customers: list[dict[str, Any]],
+        *,
+        target_scope: str = "date",
     ) -> dict[str, Any]:
+        if target_scope not in {"date", "all"}:
+            raise ValueError("Unsupported broadcast target scope")
+        if target_scope == "date" and not target_date:
+            raise ValueError("Date broadcast requires target_date")
+
         broadcast = (
             self.client.table("telegram_broadcasts")
             .insert(
                 {
                     "target_date": target_date,
+                    "target_scope": target_scope,
                     "message_text": message_text,
                     "total_count": len(customers),
                     "status": "queued",
@@ -139,9 +169,9 @@ class Database:
             }
             for customer in customers
         ]
-        if logs:
+        for start in range(0, len(logs), 500):
             self.client.table("telegram_broadcast_logs").upsert(
-                logs,
+                logs[start : start + 500],
                 on_conflict="broadcast_id,telegram_user_id",
             ).execute()
         return broadcast

@@ -50,3 +50,11 @@ class SchemaSecurityTests(TestCase):
         ):
             with self.subTest(field=field):
                 self.assertIn(field, SCHEMA)
+
+    def test_all_contacts_broadcast_scope_is_supported(self) -> None:
+        self.assertIn("target_scope", SCHEMA)
+        self.assertIn("target_scope in ('date', 'all')", SCHEMA)
+        self.assertIn(
+            "alter table telegram_broadcasts alter column target_date drop not null",
+            SCHEMA,
+        )

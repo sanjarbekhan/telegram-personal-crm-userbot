@@ -35,6 +35,7 @@ from app.scheduling import (
 )
 
 ScanFunc = Callable[[int], Awaitable[int]]
+ScanContactsFunc = Callable[[], Awaitable[int]]
 
 
 class BroadcastStates(StatesGroup):
@@ -82,7 +83,7 @@ def main_menu() -> ReplyKeyboardMarkup:
             [KeyboardButton(text="🆕 Lead qo‘shish"), KeyboardButton(text="📥 Leadlar")],
             [KeyboardButton(text="⚡ Kechikkanlar"), KeyboardButton(text="📈 CRM Dashboard")],
             [KeyboardButton(text="⏰ Xabar rejalash"), KeyboardButton(text="🗓 Rejadagi xabarlar")],
-            [KeyboardButton(text="📨 Broadcast yuborish")],
+            [KeyboardButton(text="📨 Broadcast yuborish"), KeyboardButton(text="👥 Barchaga broadcast")],
             [KeyboardButton(text="📅 Sana bo‘yicha mijozlar"), KeyboardButton(text="🔍 Mijoz qidirish")],
             [KeyboardButton(text="📊 Hisobot"), KeyboardButton(text="⚙️ Yordam")],
         ],
@@ -157,6 +158,7 @@ def create_dispatcher(
     cfg: Config,
     db: Database,
     scan_func: ScanFunc,
+    scan_contacts_func: ScanContactsFunc,
     send_user_message: SendUserFunc,
     resolve_username: ResolveUsernameFunc,
 ) -> Dispatcher:
@@ -201,7 +203,8 @@ def create_dispatcher(
             "📈 <b>CRM Dashboard</b> — lead, to‘lov va nashr ko‘rsatkichlari.\n"
             "⏰ <b>Xabar rejalash</b> — username, vaqt va matn kiriting.\n"
             "🗓 <b>Rejadagi xabarlar</b> — holatini ko‘ring yoki oldindan bekor qiling.\n"
-            "📨 <b>Broadcast</b> — tanlangan kundagi CRM mijozlariga yuboring.\n\n"
+            "📨 <b>Broadcast</b> — tanlangan kundagi CRM mijozlariga yuboring.\n"
+            "👥 <b>Barchaga broadcast</b> — barcha shaxsiy suhbatlardagi insonlarga yuboring.\n\n"
             "Buyruqlar:\n"
             "/scan 30 — oxirgi 30 kunlik private chatlarni bazaga tushirish\n"
             "/status TELEGRAM_ID follow_up — mijoz statusini o‘zgartirish\n"
@@ -274,8 +277,13 @@ def create_dispatcher(
             return
         text = "📊 <b>Oxirgi broadcastlar</b>\n\n"
         for broadcast in rows:
+            scope_text = (
+                "Barcha kontaktlar"
+                if broadcast.get("target_scope") == "all"
+                else f"Sana: <code>{broadcast.get('target_date')}</code>"
+            )
             text += (
-                f"Sana: <code>{broadcast.get('target_date')}</code>\n"
+                f"Qamrov: {scope_text}\n"
                 f"Status: <b>{html.escape(broadcast.get('status') or '')}</b>\n"
                 f"Jami: {broadcast.get('total_count')} | ✅ {broadcast.get('sent_count')} | "
                 f"❌ {broadcast.get('failed_count')} | ⏭ {broadcast.get('skipped_count')}\n\n"
@@ -499,6 +507,48 @@ def create_dispatcher(
             parse_mode="HTML",
         )
 
+    @router.message(F.text == "👥 Barchaga broadcast")
+    async def broadcast_all_start(message: Message, state: FSMContext) -> None:
+        if await reject_non_admin(message):
+            return
+        await state.clear()
+        await message.answer(
+            "🔄 Telegramdagi shaxsiy suhbatlar tekshirilyapti...\n"
+            "Faqat ism, username va Telegram ID olinadi; eski xabar matnlari import qilinmaydi."
+        )
+        try:
+            imported_count = await scan_contacts_func()
+            customers = await asyncio.to_thread(db.get_all_broadcast_customers)
+        except Exception as exc:
+            await message.answer(
+                f"❌ Kontaktlarni yuklashda xato: {html.escape(str(exc))}",
+                parse_mode="HTML",
+                reply_markup=main_menu(),
+            )
+            return
+
+        if not customers:
+            await message.answer(
+                "Barchaga broadcast uchun mos kontakt topilmadi.",
+                reply_markup=main_menu(),
+            )
+            return
+
+        await state.update_data(
+            target_scope="all",
+            target_date=None,
+            customers=customers,
+        )
+        await state.set_state(BroadcastStates.waiting_message)
+        await message.answer(
+            f"✅ Telegramdan <b>{imported_count}</b> ta shaxsiy suhbat tekshirildi.\n"
+            f"Broadcast uchun <b>{len(customers)}</b> ta kontakt tayyor.\n\n"
+            "Botlar, guruhlar, o‘chirilgan akkauntlar va <code>do_not_contact</code> "
+            "kontaktlar chiqarib tashlandi.\n\n"
+            "Endi yuboriladigan xabar matnini yozing.",
+            parse_mode="HTML",
+        )
+
     @router.message(BroadcastStates.waiting_date)
     async def broadcast_date_received(message: Message, state: FSMContext) -> None:
         if await reject_non_admin(message):
@@ -542,7 +592,11 @@ def create_dispatcher(
             )
             return
 
-        await state.update_data(target_date=target_date, customers=customers)
+        await state.update_data(
+            target_scope="date",
+            target_date=target_date,
+            customers=customers,
+        )
         await state.set_state(BroadcastStates.waiting_message)
         await message.answer(
             f"✅ <code>{target_date}</code> kuni <b>{len(customers)}</b> ta mijoz topildi.\n\n"
@@ -559,18 +613,24 @@ def create_dispatcher(
             await message.answer("❌ Xabar matni bo‘sh bo‘lmasin.")
             return
         data = await state.get_data()
-        target_date = data["target_date"]
+        target_scope = data.get("target_scope", "date")
+        target_date = data.get("target_date")
         customers = data["customers"]
         min_delay = db.get_setting_int("min_delay_seconds", cfg.min_delay_seconds)
         max_delay = db.get_setting_int("max_delay_seconds", cfg.max_delay_seconds)
         avg_delay = (min_delay + max_delay) / 2
         estimated_minutes = round((len(customers) * avg_delay) / 60, 1)
 
+        scope_text = (
+            "Barcha mos shaxsiy kontaktlar"
+            if target_scope == "all"
+            else f"{target_date} kundagi mijozlar"
+        )
         await state.update_data(message_text=message_text)
         await state.set_state(BroadcastStates.waiting_confirm)
         await message.answer(
             "📨 <b>Broadcast preview</b>\n\n"
-            f"Sana: <code>{target_date}</code>\n"
+            f"Qamrov: <b>{html.escape(scope_text)}</b>\n"
             f"Mijozlar soni: <b>{len(customers)}</b>\n"
             f"Taxminiy vaqt: <b>{estimated_minutes}</b> daqiqa\n\n"
             f"Xabar:\n<blockquote>{html.escape(message_text)}</blockquote>\n\n"
@@ -596,10 +656,12 @@ def create_dispatcher(
             return
         await safe_callback_answer(callback, "Navbatga qo‘shilyapti…")
         data = await state.get_data()
+        target_scope = data.get("target_scope", "date")
         target_date = data.get("target_date")
         message_text = data.get("message_text")
         customers = data.get("customers") or []
-        if not target_date or not message_text or not customers:
+        missing_target = target_scope == "date" and not target_date
+        if missing_target or not message_text or not customers:
             if callback.message:
                 await callback.message.answer(
                     "❌ Ma’lumot yetarli emas. Qaytadan boshlang.",
@@ -607,12 +669,24 @@ def create_dispatcher(
                 )
             await state.clear()
             return
-        broadcast = db.create_broadcast(target_date, message_text, customers)
+        broadcast = await asyncio.to_thread(
+            db.create_broadcast,
+            target_date,
+            message_text,
+            customers,
+            target_scope=target_scope,
+        )
         await state.clear()
         if callback.message:
+            scope_text = (
+                "barcha mos kontaktlar"
+                if target_scope == "all"
+                else f"{target_date} kundagi mijozlar"
+            )
             await callback.message.answer(
                 "✅ Broadcast navbatga qo‘shildi.\n"
                 f"ID: <code>{broadcast['id']}</code>\n"
+                f"Qamrov: <b>{html.escape(scope_text)}</b>\n"
                 f"Mijozlar: <b>{len(customers)}</b>\n\n"
                 "Sender worker ularni shaxsiy akkauntingizdan navbat bilan yuboradi.",
                 parse_mode="HTML",

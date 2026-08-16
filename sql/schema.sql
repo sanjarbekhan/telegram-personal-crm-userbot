@@ -44,7 +44,8 @@ create table if not exists telegram_chat_messages (
 
 create table if not exists telegram_broadcasts (
   id uuid primary key default gen_random_uuid(),
-  target_date date not null,
+  target_date date,
+  target_scope text not null default 'date' check (target_scope in ('date', 'all')),
   message_text text not null,
   total_count int default 0,
   sent_count int default 0,
@@ -126,6 +127,18 @@ alter table telegram_scheduled_messages add column if not exists cancel_on_reply
 alter table telegram_scheduled_messages add column if not exists sequence_step int;
 alter table telegram_scheduled_messages add column if not exists template_key text;
 alter table telegram_scheduled_messages add column if not exists cancelled_reason text;
+
+alter table telegram_broadcasts alter column target_date drop not null;
+alter table telegram_broadcasts add column if not exists target_scope text not null default 'date';
+
+do $$
+begin
+  alter table telegram_broadcasts
+    add constraint telegram_broadcasts_target_scope_check
+    check (target_scope in ('date', 'all'));
+exception
+  when duplicate_object then null;
+end $$;
 
 create table if not exists crm_settings (
   key text primary key,

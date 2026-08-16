@@ -181,8 +181,13 @@ async def _process_broadcast(
     await db_call(db.update_log, log["id"], "processing")
 
     try:
+        entity = await client.get_entity(int(log["telegram_user_id"]))
+        if not isinstance(entity, User):
+            raise ValueError("Qabul qiluvchi shaxsiy Telegram foydalanuvchisi emas")
+        if entity.bot or entity.deleted or entity.is_self:
+            raise ValueError("Bot, o‘chirilgan yoki o‘z akkauntingizga yuborib bo‘lmaydi")
         await client.send_message(
-            int(log["telegram_user_id"]),
+            entity,
             broadcast["message_text"],
         )
         await db_call(db.update_log, log["id"], "sent")
@@ -201,11 +206,16 @@ async def _process_broadcast(
     counts = await db_call(db.recalc_broadcast_counts, log["broadcast_id"])
     refreshed = await db_call(db.get_broadcast, log["broadcast_id"])
     if refreshed and refreshed.get("status") == "finished":
+        scope_text = (
+            "Barcha kontaktlar"
+            if refreshed.get("target_scope") == "all"
+            else f"Sana: {refreshed.get('target_date')}"
+        )
         await notify_admin(
             admin_bot,
             cfg,
             "📊 Broadcast tugadi:\n"
-            f"Sana: {refreshed.get('target_date')}\n"
+            f"Qamrov: {scope_text}\n"
             f"Jami: {refreshed.get('total_count')}\n"
             f"✅ Yuborildi: {counts['sent_count']}\n"
             f"❌ Xato: {counts['failed_count']}\n"
